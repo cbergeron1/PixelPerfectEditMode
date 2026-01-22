@@ -84,6 +84,13 @@ local function UpdateUIFromSystem()
             if (math.abs(diffX) < 0.1 and math.abs(diffY) < 0.1) or seekAttempts > 20 then
                 targetX, targetY = nil, nil
                 print(string.format("|cFF00FFFFPixelPerfect:|r Stabilized at %.1f, %.1f (Err: %.1f)", globalX, globalY, math.max(math.abs(diffX), math.abs(diffY))))
+                
+                -- Notify Edit Mode Manager so "Save" works
+                -- Now that our placement is stable and math is correct, this shouldn't cause jumps
+                if selectedSystem.SetUserPlaced then selectedSystem:SetUserPlaced(true) end
+                if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
+                     EditModeManagerFrame:OnSystemPositionChange(selectedSystem)
+                end
             else
                 -- Not there yet? Nudge it.
                 local point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = selectedSystem:GetPoint(1)
