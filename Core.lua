@@ -4,9 +4,12 @@ local addonName, PPE = ...
 local FRAME_WIDTH = 200
 local FRAME_HEIGHT = 100
 local TITLE_HEIGHT = 20
+local SNAP_GRID_SIZE = 1
+local SNAP_EPSILON = 0.05
 
 -- --- Variables ---
 local selectedSystem = nil
+local snapInProgress = false
 
 -- --- UI Creation ---
 local MainFrame = CreateFrame("Frame", "PixelPerfectEditModeFrame", UIParent, "BackdropTemplate")
@@ -56,6 +59,18 @@ end
 local InputX = CreateCoordInput("Screen X:", MainFrame, -40)
 local InputY = CreateCoordInput("Screen Y:", MainFrame, -70)
 
+local function RoundToGrid(value, grid)
+    if not value or not grid or grid == 0 then
+        return value
+    end
+
+    local scaled = value / grid
+    if scaled >= 0 then
+        return math.floor(scaled + 0.5) * grid
+    end
+    return math.ceil(scaled - 0.5) * grid
+end
+
 -- --- Logic ---
 local lastGlobalX, lastGlobalY = nil, nil
 local targetX, targetY = nil, nil
@@ -91,6 +106,7 @@ local function UpdateUIFromSystem()
                 if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
                      EditModeManagerFrame:OnSystemPositionChange(selectedSystem)
                 end
+                snapInProgress = false
             else
                 -- Not there yet? Nudge it.
                 local point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = selectedSystem:GetPoint(1)
@@ -125,6 +141,29 @@ local function UpdateUIFromSystem()
             lastGlobalY = globalY
         end
     end
+end
+
+local function SnapSystemToGrid(system)
+    if not system or system ~= selectedSystem then return end
+    if not IsShiftKeyDown() then return end
+    if snapInProgress or targetX or targetY then return end
+
+    local globalX = system:GetLeft()
+    local globalY = system:GetBottom()
+    if not globalX or not globalY then return end
+
+    local snappedX = RoundToGrid(globalX, SNAP_GRID_SIZE)
+    local snappedY = RoundToGrid(globalY, SNAP_GRID_SIZE)
+
+    if math.abs(snappedX - globalX) <= SNAP_EPSILON and math.abs(snappedY - globalY) <= SNAP_EPSILON then
+        return
+    end
+
+    snapInProgress = true
+    targetX = snappedX
+    targetY = snappedY
+    seekAttempts = 0
+    UpdateUIFromSystem()
 end
 
 -- Refresh Loop
@@ -199,6 +238,12 @@ local function Init()
         -- Let's check ClearSelection existence
         if EditModeManagerFrame.ClearSelectedSystem then
              hooksecurefunc(EditModeManagerFrame, "ClearSelectedSystem", function() OnSelectSystem(nil, nil) end)
+        end
+
+        if EditModeManagerFrame.OnSystemPositionChange then
+            hooksecurefunc(EditModeManagerFrame, "OnSystemPositionChange", function(_, system)
+                SnapSystemToGrid(system)
+            end)
         end
         
         print("|cFF00FFFFPixelPerfect:|r Loaded. Enter Edit Mode to use.")
