@@ -2,7 +2,7 @@
 ## Title: Pixel Perfect Edit Mode
 ## Notes: Adds a pixel-perfect coordinate editor to Edit Mode selection.
 ## Author: Diodude
-## Version: 1.0.0
+## Version: 1.1.0
 ## IconTexture: Interface\AddOns\PixelPerfectEditMode\icon
 
 Core.lua
