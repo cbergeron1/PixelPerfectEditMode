@@ -4,5 +4,7 @@
 ## Author: Diodude
 ## Version: 1.1.0
 ## IconTexture: Interface\AddOns\PixelPerfectEditMode\icon
+## X-Curse-Project-ID: 1440927
 
 Core.lua
+
