@@ -1,29 +1,26 @@
 local addonName, PPE = ...
 
--- --- Constants & Configuration ---
+-- Configuration
 local FRAME_WIDTH = 200
 local FRAME_HEIGHT = 100
 local TITLE_HEIGHT = 20
-local SNAP_GRID_SIZE = 1
-local SNAP_EPSILON = 0.05
 
--- --- Variables ---
 local selectedSystem = nil
-local snapInProgress = false
+local initialized = false
 
--- --- UI Creation ---
+-- Main Config Frame
 local MainFrame = CreateFrame("Frame", "PixelPerfectEditModeFrame", UIParent, "BackdropTemplate")
 MainFrame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
 MainFrame:SetPoint("CENTER", 0, 0)
-MainFrame:SetFrameStrata("FULLSCREEN_DIALOG") -- Bumped to prevent Edit Mode key capture (like Backspace)
+MainFrame:SetFrameStrata("FULLSCREEN_DIALOG") -- High strata to avoid key capture conflicts
 MainFrame:SetMovable(true)
 MainFrame:EnableMouse(true)
+MainFrame:SetClampedToScreen(true)
 MainFrame:RegisterForDrag("LeftButton")
 MainFrame:SetScript("OnDragStart", MainFrame.StartMoving)
 MainFrame:SetScript("OnDragStop", MainFrame.StopMovingOrSizing)
-MainFrame:Hide() -- Hide by default
+MainFrame:Hide()
 
--- Styling
 MainFrame:SetBackdrop({
     bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
     edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -33,16 +30,14 @@ MainFrame:SetBackdrop({
 MainFrame:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
 MainFrame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
 
--- Title
 local Title = MainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 Title:SetPoint("TOP", 0, -5)
 Title:SetText("Pixel Perfect")
 
--- Screen Info
 local ScreenInfo = MainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 ScreenInfo:SetPoint("BOTTOM", Title, "TOP", 0, 5)
 
--- --- Helper: Create Input Box ---
+-- Helper to create labeled inputs
 local function CreateCoordInput(label, parent, yOffset)
     local Label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     Label:SetPoint("TOPLEFT", 20, yOffset)
@@ -52,130 +47,118 @@ local function CreateCoordInput(label, parent, yOffset)
     EditBox:SetSize(80, 20)
     EditBox:SetPoint("LEFT", Label, "RIGHT", 10, 0)
     EditBox:SetAutoFocus(false)
-    EditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end) -- UX fix
+    EditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     return EditBox
 end
 
 local InputX = CreateCoordInput("Screen X:", MainFrame, -40)
 local InputY = CreateCoordInput("Screen Y:", MainFrame, -70)
 
-local function RoundToGrid(value, grid)
-    if not value or not grid or grid == 0 then
-        return value
+-- Arrow key nudging logic
+local function HandleNudge(self, key)
+    local step = 1
+    if IsShiftKeyDown() then step = 10 end
+    
+    local val = tonumber(self:GetText()) or 0
+    local changed = false
+
+    if key == "UP" or key == "RIGHT" then
+        val = val + step
+        changed = true
+    elseif key == "DOWN" or key == "LEFT" then
+        val = val - step
+        changed = true
     end
 
-    local scaled = value / grid
-    if scaled >= 0 then
-        return math.floor(scaled + 0.5) * grid
+    if changed then
+        self:SetText(string.format("%.1f", val))
+        ApplyCoords()
     end
-    return math.ceil(scaled - 0.5) * grid
 end
 
--- --- Logic ---
+InputX:SetScript("OnArrowPressed", HandleNudge)
+InputY:SetScript("OnArrowPressed", HandleNudge)
+
+
+
+-- Logic State
 local lastGlobalX, lastGlobalY = nil, nil
 local targetX, targetY = nil, nil
 local seekAttempts = 0
 
+-- Sync UI with system, or seek target position (Async Solver)
 local function UpdateUIFromSystem()
     if not selectedSystem then return end
     
-    -- Show Screen Resolution
     local screenW, screenH = GetScreenWidth(), GetScreenHeight()
     ScreenInfo:SetText(string.format("Screen: %d x %d", screenW, screenH))
 
-    -- Get Absolute Screen Coordinates
     local globalX = selectedSystem:GetLeft()
     local globalY = selectedSystem:GetBottom()
     
     if globalX and globalY then
-        -- ASYNC SOLVER LOGIC
+        -- Solver Logic
         if targetX and targetY then
             seekAttempts = seekAttempts + 1
             
             local diffX = targetX - globalX
             local diffY = targetY - globalY
             
-            -- Check for convergence (or failure/timeout after 20 frames)
+            -- Check for convergence or timeout
             if (math.abs(diffX) < 0.1 and math.abs(diffY) < 0.1) or seekAttempts > 20 then
                 targetX, targetY = nil, nil
-                print(string.format("|cFF00FFFFPixelPerfect:|r Stabilized at %.1f, %.1f (Err: %.1f)", globalX, globalY, math.max(math.abs(diffX), math.abs(diffY))))
                 
-                -- Notify Edit Mode Manager so "Save" works
-                -- Now that our placement is stable and math is correct, this shouldn't cause jumps
                 if selectedSystem.SetUserPlaced then selectedSystem:SetUserPlaced(true) end
                 if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
                      EditModeManagerFrame:OnSystemPositionChange(selectedSystem)
                 end
-                snapInProgress = false
             else
-                -- Not there yet? Nudge it.
+                -- Nudge towards target
                 local point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = selectedSystem:GetPoint(1)
                 
-                -- Dynamic Scaling
+                -- Guard against missing points
+                if not point then
+                     point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = "CENTER", UIParent, "CENTER", 0, 0
+                end
+
                 local relativeFrame = relativeTo or UIParent
                 local scale = relativeFrame:GetEffectiveScale()
-                if not scale or scale == 0 then scale = 1 end
+                if not scale or scale < 0.1 then scale = 1 end
                 
                 local localDiffX = diffX / scale
                 local localDiffY = diffY / scale
                 
-                local newOffsetX = (oldOffsetX or 0) + localDiffX
-                local newOffsetY = (oldOffsetY or 0) + localDiffY
-                
-                selectedSystem:SetPoint(point, relativeTo, relativePoint, newOffsetX, newOffsetY)
-                
-                -- If we are seeking, Do NOT update the text inputs, so user sees the target while it settles
+                selectedSystem:SetPoint(point, relativeTo, relativePoint, (oldOffsetX or 0) + localDiffX, (oldOffsetY or 0) + localDiffY)
                 return 
             end
         end
         
-        -- Normal UI Update (Only if not seeking)
+        -- Update UI Text
         if globalX ~= lastGlobalX or globalY ~= lastGlobalY then
-            if not InputX:HasFocus() then
-                 InputX:SetText(string.format("%.1f", globalX))
-            end
-            if not InputY:HasFocus() then
-                 InputY:SetText(string.format("%.1f", globalY))
-            end
+            if not InputX:HasFocus() then InputX:SetText(string.format("%.1f", globalX)) end
+            if not InputY:HasFocus() then InputY:SetText(string.format("%.1f", globalY)) end
             lastGlobalX = globalX
             lastGlobalY = globalY
         end
     end
 end
 
-local function SnapSystemToGrid(system)
-    if not system or system ~= selectedSystem then return end
-    if not IsShiftKeyDown() then return end
-    if snapInProgress or targetX or targetY then return end
 
-    local globalX = system:GetLeft()
-    local globalY = system:GetBottom()
-    if not globalX or not globalY then return end
 
-    local snappedX = RoundToGrid(globalX, SNAP_GRID_SIZE)
-    local snappedY = RoundToGrid(globalY, SNAP_GRID_SIZE)
-
-    if math.abs(snappedX - globalX) <= SNAP_EPSILON and math.abs(snappedY - globalY) <= SNAP_EPSILON then
+-- Loop: Handles async solving and safety checks
+local updateTimer = 0
+MainFrame:SetScript("OnUpdate", function(self, elapsed)
+    if MainFrame:IsShown() and EditModeManagerFrame and not EditModeManagerFrame:IsShown() then
+        MainFrame:Hide()
+        selectedSystem = nil
         return
     end
 
-    snapInProgress = true
-    targetX = snappedX
-    targetY = snappedY
-    seekAttempts = 0
-    UpdateUIFromSystem()
-end
-
--- Refresh Loop
-local updateTimer = 0
-MainFrame:SetScript("OnUpdate", function(self, elapsed)
-    -- Run Solver every single frame (vital for smooth settling)
     if targetX then 
         UpdateUIFromSystem() 
         return
     end
 
-    -- Otherwise, update UI lazily
     updateTimer = updateTimer + elapsed
     if updateTimer > 0.1 then 
         UpdateUIFromSystem()
@@ -185,6 +168,7 @@ end)
 
 local function ApplyCoords()
     if not selectedSystem then return end
+    if InCombatLockdown() then print("|cFF00FFFFPixelPerfect:|r Cannot edit during combat.") return end
     
     local newGlobalX = tonumber(InputX:GetText())
     local newGlobalY = tonumber(InputY:GetText())
@@ -194,15 +178,10 @@ local function ApplyCoords()
         return 
     end
 
-    -- Initiate Async Seek
     targetX = newGlobalX
     targetY = newGlobalY
     seekAttempts = 0
     
-    -- Print start
-    print(string.format("|cFF00FFFFPixelPerfect:|r Seeking target %.1f, %.1f...", targetX, targetY))
-    
-    -- Force immediate first tick
     UpdateUIFromSystem()
 end
 
@@ -216,7 +195,7 @@ ApplyButton:SetScript("OnClick", ApplyCoords)
 InputX:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
 InputY:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
 
--- --- Hooking ---
+-- Hooking & Lifecycle
 local function OnSelectSystem(self, system)
     selectedSystem = system
     if system then
@@ -229,27 +208,24 @@ local function OnSelectSystem(self, system)
 end
 
 local function Init()
+    if initialized then return end
+    initialized = true
+
     if EditModeManagerFrame then
-        -- Hook into selection
         hooksecurefunc(EditModeManagerFrame, "SelectSystem", OnSelectSystem)
         
-        -- Hook into Deselect/Clear?
-        -- SelectSystem(nil) might be called, or ClearSelection.
-        -- Let's check ClearSelection existence
+        -- Hook "ClearSelection" (supports multiple API versions)
         if EditModeManagerFrame.ClearSelectedSystem then
              hooksecurefunc(EditModeManagerFrame, "ClearSelectedSystem", function() OnSelectSystem(nil, nil) end)
-        end
-
-        if EditModeManagerFrame.OnSystemPositionChange then
-            hooksecurefunc(EditModeManagerFrame, "OnSystemPositionChange", function(_, system)
-                SnapSystemToGrid(system)
-            end)
+        elseif EditModeManagerFrame.ClearSelection then
+             hooksecurefunc(EditModeManagerFrame, "ClearSelection", function() OnSelectSystem(nil, nil) end)
         end
         
+        -- Event Cleanup
+        EventFrame:UnregisterEvent("ADDON_LOADED")
+        EventFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        
         print("|cFF00FFFFPixelPerfect:|r Loaded. Enter Edit Mode to use.")
-    else
-        -- Retry if EditMode isn't loaded yet?
-        -- Usually it's loaded by PLAYER_LOGIN
     end
 end
 
@@ -257,10 +233,17 @@ end
 local EventFrame = CreateFrame("Frame")
 EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 EventFrame:RegisterEvent("ADDON_LOADED")
+
+if EventRegistry and EventRegistry.RegisterCallback then
+    EventRegistry:RegisterCallback("EditMode.Exit", function() 
+        MainFrame:Hide() 
+        selectedSystem = nil
+    end)
+end
+
 EventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_ENTERING_WORLD" then
         Init()
-        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
     elseif event == "ADDON_LOADED" and arg1 == "Blizzard_EditMode" then
         Init()
     end
