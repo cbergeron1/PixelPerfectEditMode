@@ -8,6 +8,9 @@ local TITLE_HEIGHT = 20
 local selectedSystem = nil
 local initialized = false
 
+-- Event Frame (Defined early for access in Init)
+local EventFrame = CreateFrame("Frame")
+
 -- Main Config Frame
 local MainFrame = CreateFrame("Frame", "PixelPerfectEditModeFrame", UIParent, "BackdropTemplate")
 MainFrame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
@@ -230,7 +233,7 @@ local function Init()
 end
 
 -- Event Handler
-local EventFrame = CreateFrame("Frame")
+-- EventFrame created at top of file
 EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 EventFrame:RegisterEvent("ADDON_LOADED")
 
