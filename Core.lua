@@ -1,7 +1,7 @@
 local addonName, PPE = ...
 
 -- Configuration
-local FRAME_WIDTH = 200
+local FRAME_WIDTH = 240
 local FRAME_HEIGHT = 100
 local TITLE_HEIGHT = 20
 
@@ -197,6 +197,48 @@ ApplyButton:SetScript("OnClick", ApplyCoords)
 
 InputX:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
 InputY:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
+
+-- Center Buttons
+local function CreateCenterButton(parent, relativeFrame, axis)
+    local btn = CreateFrame("Button", nil, parent, "GameMenuButtonTemplate")
+    btn:SetSize(20, 20)
+    btn:SetPoint("LEFT", relativeFrame, "RIGHT", 5, 0)
+    btn:SetText("C")
+    btn:SetNormalFontObject("GameFontHighlightSmall")
+    btn:SetHighlightFontObject("GameFontHighlightSmall")
+    
+    btn:SetScript("OnClick", function()
+        if not selectedSystem then return end
+        
+        local width, height = selectedSystem:GetWidth(), selectedSystem:GetHeight()
+        local screenW, screenH = GetScreenWidth(), GetScreenHeight()
+        
+        if axis == "X" then
+            local newX = (screenW - width) / 2
+            InputX:SetText(string.format("%.1f", newX))
+            ApplyCoords()
+        elseif axis == "Y" then
+            local newY = (screenH - height) / 2
+            InputY:SetText(string.format("%.1f", newY))
+            ApplyCoords()
+        end
+    end)
+    
+    -- Add tooltip
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Center " .. axis)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+    end)
+    
+    return btn
+end
+
+local BtnCenterX = CreateCenterButton(MainFrame, InputX, "X")
+local BtnCenterY = CreateCenterButton(MainFrame, InputY, "Y")
 
 -- Hooking & Lifecycle
 local function OnSelectSystem(self, system)
