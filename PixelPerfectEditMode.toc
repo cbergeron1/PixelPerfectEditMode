@@ -2,8 +2,9 @@
 ## Title: Pixel Perfect Edit Mode
 ## Notes: Adds a pixel-perfect coordinate editor to Blizzard Edit Mode.
 ## Author: Diodude
-## Version: 1.3.0
+## Version: 1.4.1
 ## X-Curse-Project-ID: 1440927
 
 Core.lua
+
 
