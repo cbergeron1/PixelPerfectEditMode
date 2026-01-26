@@ -37,8 +37,7 @@ local Title = MainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 Title:SetPoint("TOP", 0, -5)
 Title:SetText("Pixel Perfect")
 
-local ScreenInfo = MainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-ScreenInfo:SetPoint("BOTTOM", Title, "TOP", 0, 5)
+
 
 -- Helper to create labeled inputs
 local function CreateCoordInput(label, parent, yOffset)
@@ -94,7 +93,7 @@ local function UpdateUIFromSystem()
     if not selectedSystem then return end
     
     local screenW, screenH = GetScreenWidth(), GetScreenHeight()
-    ScreenInfo:SetText(string.format("Screen: %d x %d", screenW, screenH))
+
 
     local globalX = selectedSystem:GetLeft()
     local globalY = selectedSystem:GetBottom()
@@ -188,15 +187,43 @@ local function ApplyCoords()
     UpdateUIFromSystem()
 end
 
--- Button
-local ApplyButton = CreateFrame("Button", nil, MainFrame, "GameMenuButtonTemplate")
-ApplyButton:SetSize(60, 22)
-ApplyButton:SetPoint("TOP", InputY, "BOTTOM", 0, -10)
-ApplyButton:SetText("Apply")
-ApplyButton:SetScript("OnClick", ApplyCoords)
+
 
 InputX:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
 InputY:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
+
+-- Directional Arrows
+local function CreateDirectionButton(parent, label, point, relPoint, x, y, axis, direction)
+    local btn = CreateFrame("Button", nil, parent, "GameMenuButtonTemplate")
+    btn:SetSize(24, 24)
+    btn:SetPoint(point, parent, relPoint, x, y)
+    btn:SetText(label)
+    btn:SetNormalFontObject("GameFontHighlight")
+    btn:SetHighlightFontObject("GameFontHighlight")
+    
+    btn:SetScript("OnClick", function()
+        if not selectedSystem then return end
+        
+        local step = 1
+        if IsShiftKeyDown() then step = 10 end
+        
+        local input = (axis == "X") and InputX or InputY
+        local currentVal = tonumber(input:GetText()) or 0
+        local newVal = currentVal + (step * direction)
+        
+        input:SetText(string.format("%.1f", newVal))
+        ApplyCoords()
+    end)
+    
+    return btn
+end
+
+-- Create Arrows (Up, Down, Left, Right)
+-- Note: Button sizes are small (24x24), positioned just outside the frame
+local BtnUp    = CreateDirectionButton(MainFrame, "^", "BOTTOM", "TOP", 0, 0, "Y", 1)
+local BtnDown  = CreateDirectionButton(MainFrame, "v", "TOP", "BOTTOM", 0, 0, "Y", -1)
+local BtnLeft  = CreateDirectionButton(MainFrame, "<", "RIGHT", "LEFT", 0, 0, "X", -1)
+local BtnRight = CreateDirectionButton(MainFrame, ">", "LEFT", "RIGHT", 0, 0, "X", 1)
 
 -- Center Buttons
 local function CreateCenterButton(parent, relativeFrame, axis)
