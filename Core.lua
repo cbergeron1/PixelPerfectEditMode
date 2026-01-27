@@ -56,89 +56,130 @@ end
 local InputX = CreateCoordInput("Screen X:", MainFrame, -40)
 local InputY = CreateCoordInput("Screen Y:", MainFrame, -70)
 
+-- Core Positioning Logic (Ported from SenseiClassResourceBar/LibEQOL)
+-- Moves the frame by 'dx' and 'dy' SCREEN PIXELS
+local function AdjustPosition(frame, dx, dy)
+    if InCombatLockdown() then print("|cFF00FFFFPixelPerfect:|r Cannot edit during combat.") return end
+
+    local scale = frame:GetEffectiveScale()
+    if not scale or scale < 0.01 then scale = 1 end
+
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+    if not point then
+        point, relativeTo, relativePoint, x, y = "CENTER", UIParent, "CENTER", 0, 0
+    end
+
+    -- Convert Screen Pixel Delta to Local Delta
+    x = (x or 0) + (dx / scale)
+    y = (y or 0) + (dy / scale)
+
+    frame:ClearAllPoints()
+    frame:SetPoint(point, relativeTo or UIParent, relativePoint or point, x, y)
+    
+    if frame.SetUserPlaced then frame:SetUserPlaced(true) end
+    if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
+         EditModeManagerFrame:OnSystemPositionChange(frame)
+    end
+end
+
+-- Moves the frame by 'dx' and 'dy' LOCAL UNITS (already scaled)
+local function AdjustPositionLocal(frame, dx, dy)
+    if InCombatLockdown() then print("|cFF00FFFFPixelPerfect:|r Cannot edit during combat.") return end
+
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+    if not point then
+        point, relativeTo, relativePoint, x, y = "CENTER", UIParent, "CENTER", 0, 0
+    end
+
+    -- Apply Local Delta directly
+    x = (x or 0) + dx
+    y = (y or 0) + dy
+
+    frame:ClearAllPoints()
+    frame:SetPoint(point, relativeTo or UIParent, relativePoint or point, x, y)
+    
+    if frame.SetUserPlaced then frame:SetUserPlaced(true) end
+    if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
+         EditModeManagerFrame:OnSystemPositionChange(frame)
+    end
+end
+
+local function ApplyAbsoluteCoords()
+    if not selectedSystem then return end
+    
+    -- GetLeft/Bottom return values in LOCAL scaled units (usually)
+    local currentX = selectedSystem:GetLeft()
+    local currentY = selectedSystem:GetBottom()
+    
+    if not currentX or not currentY then return end
+
+    local targetX = tonumber(InputX:GetText())
+    local targetY = tonumber(InputY:GetText())
+    
+    if not targetX or not targetY then 
+        print("|cFF00FFFFPixelPerfect:|r Invalid coordinates")
+        return 
+    end
+
+    -- The difference here is in LOCAL units
+    local diffX = targetX - currentX
+    local diffY = targetY - currentY
+
+    if math.abs(diffX) > 0.01 or math.abs(diffY) > 0.01 then
+        AdjustPositionLocal(selectedSystem, diffX, diffY)
+    end
+    
+    -- Force update UI to match result
+    if not InputX:HasFocus() then InputX:SetText(string.format("%.1f", selectedSystem:GetLeft() or 0)) end
+    if not InputY:HasFocus() then InputY:SetText(string.format("%.1f", selectedSystem:GetBottom() or 0)) end
+end
+
 -- Arrow key nudging logic
 local function HandleNudge(self, key)
+    if not selectedSystem then return end
+    
     local step = 1
     if IsShiftKeyDown() then step = 10 end
     
-    local val = tonumber(self:GetText()) or 0
-    local changed = false
+    local dx, dy = 0, 0
 
-    if key == "UP" or key == "RIGHT" then
-        val = val + step
-        changed = true
-    elseif key == "DOWN" or key == "LEFT" then
-        val = val - step
-        changed = true
+    if key == "UP" then dy = step
+    elseif key == "DOWN" then dy = -step
+    elseif key == "RIGHT" then dx = step
+    elseif key == "LEFT" then dx = -step
     end
-
-    if changed then
-        self:SetText(string.format("%.1f", val))
-        ApplyCoords()
+    
+    if dx ~= 0 or dy ~= 0 then
+        -- Arrows invoke Screen Pixel movement
+        AdjustPosition(selectedSystem, dx, dy)
+        -- Update UI immediately
+        InputX:SetText(string.format("%.1f", selectedSystem:GetLeft() or 0))
+        InputY:SetText(string.format("%.1f", selectedSystem:GetBottom() or 0))
     end
 end
 
 InputX:SetScript("OnArrowPressed", HandleNudge)
 InputY:SetScript("OnArrowPressed", HandleNudge)
+InputX:SetScript("OnEnterPressed", function(self) ApplyAbsoluteCoords(); self:ClearFocus() end)
+InputY:SetScript("OnEnterPressed", function(self) ApplyAbsoluteCoords(); self:ClearFocus() end)
 
 
-
--- Logic State
+-- Sync UI with system
 local lastGlobalX, lastGlobalY = nil, nil
-local targetX, targetY = nil, nil
-local seekAttempts = 0
 
--- Sync UI with system, or seek target position (Async Solver)
 local function UpdateUIFromSystem()
     if not selectedSystem then return end
     
-    local screenW, screenH = GetScreenWidth(), GetScreenHeight()
-
+    -- Only update if not typing
+    if InputX:HasFocus() or InputY:HasFocus() then return end
 
     local globalX = selectedSystem:GetLeft()
     local globalY = selectedSystem:GetBottom()
     
     if globalX and globalY then
-        -- Solver Logic
-        if targetX and targetY then
-            seekAttempts = seekAttempts + 1
-            
-            local diffX = targetX - globalX
-            local diffY = targetY - globalY
-            
-            -- Check for convergence or timeout
-            if (math.abs(diffX) < 0.1 and math.abs(diffY) < 0.1) or seekAttempts > 20 then
-                targetX, targetY = nil, nil
-                
-                if selectedSystem.SetUserPlaced then selectedSystem:SetUserPlaced(true) end
-                if EditModeManagerFrame and EditModeManagerFrame.OnSystemPositionChange then
-                     EditModeManagerFrame:OnSystemPositionChange(selectedSystem)
-                end
-            else
-                -- Nudge towards target
-                local point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = selectedSystem:GetPoint(1)
-                
-                -- Guard against missing points
-                if not point then
-                     point, relativeTo, relativePoint, oldOffsetX, oldOffsetY = "CENTER", UIParent, "CENTER", 0, 0
-                end
-
-                local relativeFrame = relativeTo or UIParent
-                local scale = relativeFrame:GetEffectiveScale()
-                if not scale or scale < 0.1 then scale = 1 end
-                
-                local localDiffX = diffX / scale
-                local localDiffY = diffY / scale
-                
-                selectedSystem:SetPoint(point, relativeTo, relativePoint, (oldOffsetX or 0) + localDiffX, (oldOffsetY or 0) + localDiffY)
-                return 
-            end
-        end
-        
-        -- Update UI Text
         if globalX ~= lastGlobalX or globalY ~= lastGlobalY then
-            if not InputX:HasFocus() then InputX:SetText(string.format("%.1f", globalX)) end
-            if not InputY:HasFocus() then InputY:SetText(string.format("%.1f", globalY)) end
+            InputX:SetText(string.format("%.1f", globalX))
+            InputY:SetText(string.format("%.1f", globalY))
             lastGlobalX = globalX
             lastGlobalY = globalY
         end
@@ -146,8 +187,7 @@ local function UpdateUIFromSystem()
 end
 
 
-
--- Loop: Handles async solving and safety checks
+-- Loop: Handles passive UI updates (polling for external changes)
 local updateTimer = 0
 MainFrame:SetScript("OnUpdate", function(self, elapsed)
     if MainFrame:IsShown() and EditModeManagerFrame and not EditModeManagerFrame:IsShown() then
@@ -156,41 +196,13 @@ MainFrame:SetScript("OnUpdate", function(self, elapsed)
         return
     end
 
-    if targetX then 
-        UpdateUIFromSystem() 
-        return
-    end
-
     updateTimer = updateTimer + elapsed
-    if updateTimer > 0.1 then 
+    if updateTimer > 0.2 then 
         UpdateUIFromSystem()
         updateTimer = 0
     end
 end)
 
-local function ApplyCoords()
-    if not selectedSystem then return end
-    if InCombatLockdown() then print("|cFF00FFFFPixelPerfect:|r Cannot edit during combat.") return end
-    
-    local newGlobalX = tonumber(InputX:GetText())
-    local newGlobalY = tonumber(InputY:GetText())
-    
-    if not newGlobalX or not newGlobalY then 
-        print("|cFF00FFFFPixelPerfect:|r Invalid coordinates")
-        return 
-    end
-
-    targetX = newGlobalX
-    targetY = newGlobalY
-    seekAttempts = 0
-    
-    UpdateUIFromSystem()
-end
-
-
-
-InputX:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
-InputY:SetScript("OnEnterPressed", function(self) ApplyCoords(); self:ClearFocus() end)
 
 -- Directional Arrows
 local function CreateDirectionButton(parent, label, point, relPoint, x, y, axis, direction)
@@ -207,19 +219,18 @@ local function CreateDirectionButton(parent, label, point, relPoint, x, y, axis,
         local step = 1
         if IsShiftKeyDown() then step = 10 end
         
-        local input = (axis == "X") and InputX or InputY
-        local currentVal = tonumber(input:GetText()) or 0
-        local newVal = currentVal + (step * direction)
+        local dx, dy = 0, 0
+        if axis == "X" then dx = step * direction
+        else dy = step * direction end
         
-        input:SetText(string.format("%.1f", newVal))
-        ApplyCoords()
+        AdjustPosition(selectedSystem, dx, dy)
+        UpdateUIFromSystem()
     end)
     
     return btn
 end
 
 -- Create Arrows (Up, Down, Left, Right)
--- Note: Button sizes are small (24x24), positioned just outside the frame
 local BtnUp    = CreateDirectionButton(MainFrame, "^", "BOTTOM", "TOP", 0, 0, "Y", 1)
 local BtnDown  = CreateDirectionButton(MainFrame, "v", "TOP", "BOTTOM", 0, 0, "Y", -1)
 local BtnLeft  = CreateDirectionButton(MainFrame, "<", "RIGHT", "LEFT", 0, 0, "X", -1)
@@ -237,18 +248,33 @@ local function CreateCenterButton(parent, relativeFrame, axis)
     btn:SetScript("OnClick", function()
         if not selectedSystem then return end
         
-        local width, height = selectedSystem:GetWidth(), selectedSystem:GetHeight()
-        local screenW, screenH = GetScreenWidth(), GetScreenHeight()
+        -- Target: UIParent Center (Physical)
+        local uipX, uipY = UIParent:GetCenter()
+        local uipScale = UIParent:GetEffectiveScale()
+        if not uipX or not uipY or not uipScale then return end
+        
+        local physTargX = uipX * uipScale
+        local physTargY = uipY * uipScale
+        
+        -- Current: System Center (Physical)
+        local sysX, sysY = selectedSystem:GetCenter()
+        local sysScale = selectedSystem:GetEffectiveScale()
+        if not sysX or not sysY or not sysScale then return end
+        
+        local physSysX = sysX * sysScale
+        local physSysY = sysY * sysScale
+        
+        local dx, dy = 0, 0
         
         if axis == "X" then
-            local newX = (screenW - width) / 2
-            InputX:SetText(string.format("%.1f", newX))
-            ApplyCoords()
+            dx = physTargX - physSysX
         elseif axis == "Y" then
-            local newY = (screenH - height) / 2
-            InputY:SetText(string.format("%.1f", newY))
-            ApplyCoords()
+            dy = physTargY - physSysY
         end
+
+        -- AdjustPosition takes Physical Pixel Delta
+        AdjustPosition(selectedSystem, dx, dy)
+        UpdateUIFromSystem()
     end)
     
     -- Add tooltip
@@ -272,7 +298,7 @@ local function OnSelectSystem(self, system)
     selectedSystem = system
     if system then
         MainFrame:Show()
-        UpdateUIFromSystem()
+        UpdateUIFromSystem() -- Initial sync
     else
         MainFrame:Hide()
         selectedSystem = nil
